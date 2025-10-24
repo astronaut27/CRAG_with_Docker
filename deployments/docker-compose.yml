@@ -1,0 +1,62 @@
+version: '3.8'
+
+services:
+  # Mock API service for RAG data
+  mock-api:
+    build:
+      context: ../mock_api
+      dockerfile: ../deployments/Dockerfile.mock-api
+    container_name: crag-mock-api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../mock_api/cragkg:/app/cragkg
+    environment:
+      - PYTHONPATH=/app
+    networks:
+      - crag-network
+    restart: unless-stopped
+
+  # CRAG application connecting to local LMStudio
+  crag-app:
+    build:
+      context: ..
+      dockerfile: deployments/Dockerfile.crag-app
+    container_name: crag-app
+    depends_on:
+      - mock-api
+    environment:
+      # OpenAI for evaluation (optional)
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # Mock API connection (Docker service)
+      - CRAG_MOCK_API_URL=http://mock-api:8000
+      # Evaluation model
+      - EVALUATION_MODEL_NAME=${EVALUATION_MODEL_NAME:-gpt-4-0125-preview}
+
+    volumes:
+      # Mount data directories (relative to deployments folder)
+      # These are large files (16GB+) that should NOT be copied during build
+      - ../data:/app/data:ro
+      - ../results:/app/results
+      - ../example_data:/app/example_data:ro
+      # Mount tokenizer (if needed)
+      - ../tokenizer:/app/tokenizer:ro
+
+    # Allow access to host services
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    networks:
+      - crag-network
+
+    # Keep container running for debugging
+    stdin_open: true
+    tty: true
+
+    # Override command for interactive mode
+    command: ["python", "local_evaluation.py"]
+
+
+networks:
+  crag-network:
+    driver: bridge

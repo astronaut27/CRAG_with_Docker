@@ -3,7 +3,8 @@ uvicorn[standard]
 pydantic==2.5.3
 rank_bm25
 tqdm
-pandas==2.0.3
+numpy>=1.24.0,<2.0.0
+pandas>=2.0.0,<2.1.0
 lxml
 sqlitedict==2.1.0
 loguru

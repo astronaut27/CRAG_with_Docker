@@ -1,0 +1,24 @@
+# Exclude large knowledge graph files from Docker build context
+cragkg/
+*.sqlite
+*.pickle
+*.jsonl.bz2
+*.tar.bz2
+*.part*
+
+# Exclude development files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+
+# Exclude OS files
+.DS_Store
+Thumbs.db
+
+# Exclude logs
+*.log
