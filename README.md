@@ -46,9 +46,46 @@ Please refer to [local_evaluation.py](local_evaluation.py) for more details on h
 
 4. Test your model locally using `python local_evaluation.py`. This script will run answer generation and auto-evaluation.
 
+### Using LM Studio or Ollama for Evaluation
+
+By default, evaluation uses OpenAI's API. To use LM Studio or Ollama for evaluation instead (free, local):
+
+1. **Start LM Studio or Ollama**:
+   - **LM Studio**: Load a model and enable Local Server (usually runs on port 1234)
+   - **Ollama**: Run `ollama serve` and pull a model (e.g., `ollama pull llama3`)
+
+2. **Set environment variables**:
+   ```bash
+   # For LM Studio
+   export EVALUATION_API_BASE=http://localhost:1234/v1
+   export EVALUATION_API_KEY=lm-studio
+   export EVALUATION_MODEL_NAME=llama3  # or your model name
+   
+   # For Ollama
+   export EVALUATION_API_BASE=http://localhost:11434/v1
+   export EVALUATION_API_KEY=ollama
+   export EVALUATION_MODEL_NAME=llama3
+   ```
+
+3. **Run evaluation**:
+   ```bash
+   python local_evaluation.py
+   ```
+
+   If `EVALUATION_API_BASE` is not set, the script will use the default OpenAI API (requires API key).
+
 
 ## 🏁 Baselines
 We include three baselines for demonstration purposes, and you can read more about them in [docs/baselines.md](docs/baselines.md).
+
+## 🔌 OpenAI-Compatible Models
+We also provide OpenAI-compatible model implementations that work with Ollama, LM Studio, and other OpenAI-compatible APIs. These model allow you to run CRAG evaluations without requiring local GPU resources for model inference:
+
+- **[RAG OpenAI-Compatible Model](docs/rag_openai_compatible_model.md)**: Full RAG pipeline with semantic search using OpenAI-compatible APIs
+
+See the [RAG OpenAI-Compatible Model documentation](docs/rag_openai_compatible_model.md) for setup instructions and usage examples.
+
+**Note**: Both answer generation and evaluation can use LM Studio/Ollama. See the "Using LM Studio or Ollama for Evaluation" section above for evaluation setup.
 
 
 ## Citations
