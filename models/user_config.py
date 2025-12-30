@@ -20,3 +20,7 @@ UserModel = DummyModel
 # Uncomment the lines below to use the RAG KG LLAMA baseline
 # from models.rag_knowledge_graph_baseline import RAG_KG_Model
 # UserModel = RAG_KG_Model
+
+# Uncomment the lines below to use RAG with OpenAI-compatible API
+# from models.rag_openai_compatible_model import RAGOpenAICompatibleModel
+# UserModel = RAGOpenAICompatibleModel

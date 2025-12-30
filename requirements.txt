@@ -2,11 +2,13 @@ accelerate==1.10.1
 beautifulsoup4==4.13.5
 bitsandbytes==0.42.0
 blingfire==0.1.8
+datasets==2.14.0
 hf-transfer==0.1.9
 huggingface-hub==0.35.0
 loguru==0.7.3
 lxml==6.0.1
 openai==1.107.3
+ragas==0.1.0
 sentence_transformers==5.1.0
 torch==2.8.0
 transformers==4.56.1
