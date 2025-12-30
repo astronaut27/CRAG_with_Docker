@@ -16,7 +16,11 @@ from prompts.templates import IN_CONTEXT_EXAMPLES, INSTRUCTIONS
 from tqdm.auto import tqdm
 from transformers import LlamaTokenizerFast
 from dotenv import load_dotenv
-load_dotenv()
+
+# Load .env file from multiple possible locations
+# Try root directory first, then deployments directory
+load_dotenv()  # Try .env in current directory
+load_dotenv("deployments/.env")  # Try deployments/.env
 
 tokenizer = LlamaTokenizerFast.from_pretrained("tokenizer")
 
@@ -33,20 +37,23 @@ def get_system_message():
     return INSTRUCTIONS + "\n" + IN_CONTEXT_EXAMPLES
 
 
-def attempt_api_call(client, model_name, messages, max_retries=10):
+def attempt_api_call(client, model_name, messages, max_retries=10, timeout=30):
     """Attempt an API call with retries upon encountering specific errors."""
-    # todo: add default response when all efforts fail
     for attempt in range(max_retries):
         try:
             response = client.chat.completions.create(
                 model=model_name,
                 messages=messages,
-                response_format={"type": "json_object"},
                 temperature=0.0,
+                timeout=timeout,
             )
             return response.choices[0].message.content
-        except (APIConnectionError, RateLimitError):
-            logger.warning(f"API call failed on attempt {attempt + 1}, retrying...")
+        except (APIConnectionError, RateLimitError) as e:
+            if attempt < max_retries - 1:
+                import time
+                time.sleep(1)
+            else:
+                logger.error(f"API call failed after {max_retries} attempts: {e}")
         except Exception as e:
             logger.error(f"Unexpected error: {e}")
             break
@@ -158,29 +165,64 @@ def load_data_in_batches(dataset_path, batch_size):
 
 
 
-def generate_predictions(dataset_path, participant_model):
+def generate_predictions(dataset_path, participant_model, max_samples=None):
     """
     Processes batches of data from a dataset to generate predictions using a model.
     
     Args:
     dataset_path (str): Path to the dataset.
     participant_model (object): UserModel that provides `get_batch_size()` and `batch_generate_answer()` interfaces.
+    max_samples (int, optional): Maximum number of samples to evaluate. If None, evaluates all.
     
     Returns:
     tuple: A tuple containing lists of queries, ground truths, and predictions.
     """
     queries, ground_truths, predictions = [], [], []
     batch_size = participant_model.get_batch_size()
+    sample_count = 0
 
     for batch in tqdm(load_data_in_batches(dataset_path, batch_size), desc="Generating predictions"):
+        if max_samples and sample_count >= max_samples:
+            break
+        
         batch_ground_truths = batch.pop("answer")  # Remove answers from batch and store them
         batch_predictions = participant_model.batch_generate_answer(batch)
         
-        queries.extend(batch["query"])
-        ground_truths.extend(batch_ground_truths)
-        predictions.extend(batch_predictions)
+        # Determine how many samples to add
+        n_samples = len(batch["query"])
+        if max_samples:
+            remaining = max_samples - sample_count
+            n_samples = min(n_samples, remaining)
+        
+        queries.extend(batch["query"][:n_samples])
+        ground_truths.extend(batch_ground_truths[:n_samples])
+        predictions.extend(batch_predictions[:n_samples])
+        
+        sample_count += n_samples
+        
+        if max_samples and sample_count >= max_samples:
+            break
     
     return queries, ground_truths, predictions
+
+
+def _init_evaluation_client():
+    """Initialize OpenAI client for evaluation based on environment variables."""
+    use_openai = os.getenv("EVALUATION_OPENAPI", "true").lower() == "true"
+    
+    if use_openai:
+        openai_api_key = os.getenv("OPENAPI_API_KEY", None)
+        if not openai_api_key:
+            raise ValueError("OPENAPI_API_KEY must be set when EVALUATION_OPENAPI=true")
+        return OpenAI(api_key=openai_api_key)
+    else:
+        local_judge_api_base = os.getenv("LOCAL_JUDGE_API_BASE", None)
+        if not local_judge_api_base:
+            raise ValueError("LOCAL_JUDGE_API_BASE must be set when EVALUATION_OPENAPI=false")
+        return OpenAI(
+            base_url=local_judge_api_base,
+            api_key=os.getenv("LOCAL_JUDGE_API_KEY", "lm-studio")
+        )
 
 
 def evaluate_predictions(queries, ground_truths_list, predictions, evaluation_model_name):
@@ -197,99 +239,130 @@ def evaluate_predictions(queries, ground_truths_list, predictions, evaluation_mo
     Returns:
     dict: A dictionary containing evaluation results.
     """
+    openai_client = _init_evaluation_client()
+    n_miss, n_correct = 0, 0
+    system_message = get_system_message()
 
-    if "chat" in evaluation_model_name.lower() or "gpt" in evaluation_model_name.lower():
-        # now we are using chatgpt
-        openai_client = OpenAI()
-        n_miss, n_correct = 0, 0
-        system_message = get_system_message()
+    for _idx, prediction in enumerate(tqdm(
+        predictions, total=len(predictions), desc="Evaluating Predictions"
+    )):
+        query = queries[_idx]
+        # Normalize ground_truths to list format
+        ground_truths_item = ground_truths_list[_idx]
+        if isinstance(ground_truths_item, str):
+            ground_truths = [ground_truths_item.strip()]
+        elif isinstance(ground_truths_item, list):
+            ground_truths = [gt.strip() if isinstance(gt, str) else str(gt).strip() for gt in ground_truths_item]
+        else:
+            ground_truths = [str(ground_truths_item).strip()]
+        
+        prediction = trim_predictions_to_max_token_length(prediction).strip()
+        prediction_lowercase = prediction.lower()
 
-        for _idx, prediction in enumerate(tqdm(
-            predictions, total=len(predictions), desc="Evaluating Predictions"
-        )):
-            query = queries[_idx]
-            ground_truths = ground_truths_list[_idx].strip()
-            # trim prediction to 75 tokens using Llama2 tokenizer
-            prediction = trim_predictions_to_max_token_length(prediction)
-            prediction = prediction.strip()
-            prediction_lowercase = prediction.lower()
+        if "i don't know" in prediction_lowercase:
+            n_miss += 1
+            continue
 
-            if "i don't know" in prediction_lowercase:
-                n_miss += 1
-                continue
+        accuracy = -1
+        for ground_truth in ground_truths:
+            ground_truth_lowercase = ground_truth.lower()
+            messages = [
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": f"Question: {query}\n Ground truth: {ground_truth}\n Prediction: {prediction}\n"},
+            ]
+            
+            if prediction_lowercase == ground_truth_lowercase:
+                accuracy = 1
+                break
+            elif "invalid" in prediction_lowercase and "invalid" in ground_truth_lowercase:
+                accuracy = 1
+                break
+            elif "invalid" in prediction_lowercase and "invalid" not in ground_truth_lowercase:
+                accuracy = 0
+                continue  # Check next ground_truth
+            elif "invalid" not in prediction_lowercase and "invalid" in ground_truth_lowercase:
+                accuracy = 0
+                continue  # Check next ground_truth
+            else:
+                # Use LLM judge to evaluate correctness
+                response = attempt_api_call(openai_client, evaluation_model_name, messages)
+                if response:
+                    log_response(messages, response)
+                    _, accuracy = parse_response(response)
+                    if accuracy == 1:
+                        break  # Found correct match, no need to check other ground_truths
+                    # If accuracy == 0, continue to check next ground_truth
+                # If response is None (API failed), continue to check next ground_truth (accuracy remains -1)
 
-            accuracy = -1
+        if accuracy == 1:
+            n_correct += 1
 
-            for ground_truth in ground_truths:
-                ground_truth_lowercase = ground_truth.lower()
-                prediction_lowercase = prediction.lower()
-                messages = [
-                    {"role": "system", "content": system_message},
-                    {
-                        "role": "user",
-                        "content": f"Question: {query}\n Ground truth: {ground_truth}\n Prediction: {prediction}\n",
-                    },
-                ]
-                if prediction_lowercase == ground_truth_lowercase:
-                    # exact correct
-                    accuracy = 1
-                    break
-                elif "invalid" in prediction_lowercase and "invalid" in ground_truth_lowercase:
-                    accuracy = 1
-                    break
-                elif "invalid" in prediction_lowercase and "invalid" not in ground_truth_lowercase:
-                    # hallucination
-                    accuracy = 0
-                    continue
-                elif "invalid" not in prediction_lowercase and "invalid" in ground_truth_lowercase:
-                    # hallucination
-                    accuracy = 0
-                    continue
-                else:
-                    # need to use the OpenAI evaluation model to get the accuracy result (0 means wrong, 1 means correct)
-                    response = attempt_api_call(openai_client, evaluation_model_name, messages)
-                    if response:
-                        log_response(messages, response)
-                        _, accuracy = parse_response(response)
-                        if accuracy == 1:
-                            # no need to check other ground truth(s)
-                            break
-
-            if accuracy == 1:
-                n_correct += 1
-
-        n = len(predictions)
-        results = {
-            "score": (2 * n_correct + n_miss) / n - 1,
-            "accuracy": n_correct / n,
-            "hallucination": (n - n_correct - n_miss) / n,
-            "missing": n_miss / n,
-            "n_miss": n_miss,
-            "n_correct": n_correct,
-            "n_hallucination": n - n_correct - n_miss,
-            "total": n,
-        }
-        logger.info(results)
-        return results
-    elif "llama" in evaluation_model_name.lower():
-        # now we are using llama model to evaluate
-        # to be filled by Jiaqi
-        raise NotImplementedError("Llama evaluation model is not implemented yet.")
-    else:
-        raise NotImplementedError(f"Unknown evaluation model: {evaluation_model_name}")
+    n = len(predictions)
+    results = {
+        "score": (2 * n_correct + n_miss) / n - 1,
+        "accuracy": n_correct / n,
+        "hallucination": (n - n_correct - n_miss) / n,
+        "missing": n_miss / n,
+        "n_miss": n_miss,
+        "n_correct": n_correct,
+        "n_hallucination": n - n_correct - n_miss,
+        "total": n,
+    }
+    logger.info(results)
+    return results
 
 
 if __name__ == "__main__":
     from models.user_config import UserModel
+    import argparse
 
-    DATASET_PATH = "example_data/dev_data.jsonl.bz2"
-    EVALUATION_MODEL_NAME = os.getenv("EVALUATION_MODEL_NAME", "gpt-4-0125-preview")
+    parser = argparse.ArgumentParser(description="Evaluate RAG model")
+    parser.add_argument(
+        "--dataset_path",
+        type=str,
+        default="data/crag_task_1_and_2_dev_v4.jsonl.bz2",
+        help="Path to the dataset file"
+    )
+    parser.add_argument(
+        "--max_samples",
+        type=int,
+        default=None,
+        help="Maximum number of samples to evaluate (None = all samples)"
+    )
+    
+    args = parser.parse_args()
+    
+    # Validate max_samples
+    if args.max_samples is not None and args.max_samples <= 0:
+        raise ValueError("max_samples must be a positive integer or None")
+    
+    DATASET_PATH = args.dataset_path
+    
+    # Get evaluation model name
+    use_openai = os.getenv("EVALUATION_OPENAPI", "true").lower() == "true"
+    evaluation_model_name = os.getenv(
+        "OPENAPI_MODEL_NAME" if use_openai else "LOCAL_JUDGE_MODEL_NAME",
+        "gpt-4-0125-preview" if use_openai else "llama3"
+    )
 
     # Generate predictions
     participant_model = UserModel()
-    queries, ground_truths, predictions = generate_predictions(DATASET_PATH, participant_model)
+    queries, ground_truths, predictions = generate_predictions(
+        DATASET_PATH, participant_model, max_samples=args.max_samples
+    )
+    
+    if len(predictions) == 0:
+        logger.error("No predictions generated. Please check the dataset path and model configuration.")
+        exit(1)
+    
+    # Validate that all lists have the same length
+    if not (len(queries) == len(ground_truths) == len(predictions)):
+        logger.error(f"Mismatch in list lengths: queries={len(queries)}, ground_truths={len(ground_truths)}, predictions={len(predictions)}")
+        exit(1)
+    
+    logger.info(f"Evaluating {len(predictions)} predictions...")
+    
     # Evaluate Predictions
-    openai_client = OpenAI()
     evaluation_results = evaluate_predictions(
-        queries, ground_truths, predictions, EVALUATION_MODEL_NAME
+        queries, ground_truths, predictions, evaluation_model_name
     )
