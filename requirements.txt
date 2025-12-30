@@ -1,15 +1,21 @@
 accelerate==1.10.1
 beautifulsoup4==4.13.5
 bitsandbytes==0.42.0
-blingfire==0.1.8
-datasets==2.14.0
+blingfire==0.1.8  # Optional: fallback sentence splitting available if not installed
+datasets>=2.20.0  # Updated for compatibility with pyarrow 21.0.0
+pyarrow>=14.0.0  # Required for datasets 2.20.0+
 hf-transfer==0.1.9
 huggingface-hub==0.35.0
 loguru==0.7.3
 lxml==6.0.1
+numpy>=1.24.0
 openai==1.107.3
+python-dotenv==1.0.0
 ragas==0.1.0
+ray==2.31.0
+requests>=2.31.0
 sentence_transformers==5.1.0
 torch==2.8.0
+tqdm>=4.65.0
 transformers==4.56.1
 vllm==0.10.2

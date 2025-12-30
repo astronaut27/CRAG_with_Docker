@@ -5,8 +5,8 @@
 # LICENSE file in the root directory of this source tree.
 
 # isort: skip_file
-from models.dummy_model import DummyModel
-UserModel = DummyModel
+# from models.dummy_model import DummyModel
+# UserModel = DummyModel
 
 # Uncomment the lines below to use the Vanilla LLAMA baseline
 # from models.vanilla_llama_baseline import InstructModel
@@ -22,5 +22,5 @@ UserModel = DummyModel
 # UserModel = RAG_KG_Model
 
 # Uncomment the lines below to use RAG with OpenAI-compatible API
-# from models.rag_openai_compatible_model import RAGOpenAICompatibleModel
-# UserModel = RAGOpenAICompatibleModel
+from models.rag_openai_compatible_model import RAGOpenAICompatibleModel
+UserModel = RAGOpenAICompatibleModel

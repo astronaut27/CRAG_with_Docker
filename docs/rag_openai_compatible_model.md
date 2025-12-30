@@ -40,11 +40,11 @@ The model can be configured using environment variables:
 
 ### Required Environment Variables
 
-- `OPENAI_API_BASE`: Base URL for the OpenAI-compatible API
+- `RAG_MODEL_API_BASE`: Base URL for the OpenAI-compatible API (for answer generation)
   - For Ollama: `http://localhost:11434/v1`
   - For LM Studio: `http://localhost:1234/v1`
-- `OPENAI_API_KEY`: API key (Ollama doesn't require a real key, use "ollama")
-- `OPENAI_MODEL_NAME`: Name of the model in your API server (e.g., "llama3", "llama2", etc.)
+- `RAG_MODEL_API_KEY`: API key (Ollama doesn't require a real key, use "ollama")
+- `RAG_MODEL_NAME`: Name of the model in your API server (e.g., "llama3", "llama2", etc.)
 
 ### Optional Configuration
 
@@ -77,9 +77,9 @@ The model can be configured using environment variables:
 
 3. **Set environment variables**:
    ```bash
-   export OPENAI_API_BASE=http://localhost:11434/v1
-   export OPENAI_API_KEY=ollama
-   export OPENAI_MODEL_NAME=llama3
+   export RAG_MODEL_API_BASE=http://localhost:11434/v1
+   export RAG_MODEL_API_KEY=ollama
+   export RAG_MODEL_NAME=llama3
    ```
 
 4. **Update `models/user_config.py`**:
@@ -98,9 +98,9 @@ The model can be configured using environment variables:
 
 4. **Set environment variables**:
    ```bash
-   export OPENAI_API_BASE=http://localhost:1234/v1
-   export OPENAI_API_KEY=lm-studio  # or any value
-   export OPENAI_MODEL_NAME=your-model-name
+   export RAG_MODEL_API_BASE=http://localhost:1234/v1
+   export RAG_MODEL_API_KEY=lm-studio  # or any value
+   export RAG_MODEL_NAME=your-model-name
    ```
 
 5. **Update `models/user_config.py`** (same as above)
@@ -126,7 +126,7 @@ The model will:
 The `ChunkExtractor` class handles HTML parsing and chunk extraction:
 
 - Uses BeautifulSoup to parse HTML and extract text
-- Uses blingfire's `text_to_sentences_and_offsets` to split text into sentences
+- Uses blingfire's `text_to_sentences_and_offsets` to split text into sentences (optional: fallback to simple regex-based splitting if blingfire is not available or incompatible with your architecture)
 - Processes chunks in parallel using Ray for better performance
 - De-duplicates chunks within each interaction
 
@@ -187,8 +187,8 @@ Answers are generated using the OpenAI chat completions API:
 
 If you see connection errors:
 - Ensure Ollama/LM Studio is running
-- Check the `OPENAI_API_BASE` URL is correct
-- Verify the model name in `OPENAI_MODEL_NAME` matches your loaded model
+- Check the `RAG_MODEL_API_BASE` URL is correct
+- Verify the model name in `RAG_MODEL_NAME` matches your loaded model
 
 ### Slow Performance
 
@@ -202,6 +202,14 @@ If generation is slow:
 If you see tokenizer warnings:
 - The model will still work, but token trimming may not be accurate
 - Ensure the tokenizer directory exists or the model can be downloaded from HuggingFace
+
+### Blingfire Architecture Issues (Apple Silicon)
+
+If you encounter `OSError: incompatible architecture` with `blingfire`:
+- This is expected on Apple Silicon (ARM64) when `blingfire` is installed for x86_64
+- The model automatically falls back to a simple regex-based sentence splitting method
+- The fallback works on all architectures and doesn't require `blingfire`
+- For best performance, you can try installing `blingfire` from source or use Docker (which may have better architecture support)
 
 ## References
 
